@@ -333,15 +333,16 @@
 
   // ---------- 음성 인식 ----------
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  let rec = null, listening = false, interimText = '', silenceT = null, restartT = null;
+  let rec = null, listening = false, interim = '', silenceT = null, restartT = null;
   let previewT = null, previewFor = '', previewText = '';
   let wakeLock = null;
 
   function status(html) { $('#status').innerHTML = html; }
+  const listeningText = () => `듣는 중 · ${NAME[cfg.src]} → ${activeTargets().map((l) => NAME[l]).join(', ') || '번역 없음'}`;
 
   function finalizeInterim() {
-    if (interimText.trim()) commit(interimText);
-    interimText = ''; previewFor = ''; previewText = '';
+    if (interim.trim()) commit(interim);
+    interim = ''; previewFor = ''; previewText = '';
     setInterim('');
   }
 
@@ -349,68 +350,85 @@
     if (!cfg.preview || previewT || !activeTargets().length) return;
     previewT = setTimeout(async () => {
       previewT = null;
-      const text = interimText.trim();
+      const text = interim.trim();
       if (!text || text === previewFor || text.length < 12) return;
       previewFor = text;
       const tl = activeTargets()[0];
       try {
         const out = await translate(text, cfg.src, [tl]);
-        if (interimText.trim().startsWith(text.slice(0, 10))) { previewText = out[tl]; setInterim(interimText, previewText); }
+        if (interim.trim().startsWith(text.slice(0, 10))) { previewText = out[tl]; setInterim(interim, previewText); }
       } catch {}
     }, 2000);
   }
 
-  function makeRec() {
+  // Each recognizer gets a generation number; events from an older one are ignored, so a late
+  // onend can never spawn a second recognizer. A watchdog replaces a recognizer that went quiet
+  // (Safari sometimes stops without firing onend, or never fires onstart after a restart).
+  let gen = 0, lastAlive = 0, startedAt = 0, everStarted = false, deniedTries = 0, restarts = 0, lastHeard = 0, watchT = null;
+  const clock = t => new Date(t).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+  function liveStatus() {
+    if (!listening) return;
+    status(listeningText() + (lastHeard ? ` · 마지막 인식 ${clock(lastHeard)}` : '') + (restarts ? ` · 재연결 ${restarts}회` : ''));
+  }
+  function makeRec(g) {
     const r = new SR();
-    r.lang = LOCALE[cfg.src];
-    r.continuous = true;
-    r.interimResults = true;
-    r.maxAlternatives = 1;
-    r.onstart = () => status(`<b>듣는 중</b> · ${NAME[cfg.src]} → ${activeTargets().map((l) => NAME[l]).join(', ') || '번역 없음'}`);
-    r.onresult = (e) => {
-      let finals = '', interim = '';
+    r.lang = LOCALE[cfg.src]; r.continuous = true; r.interimResults = true; r.maxAlternatives = 1;
+    const alive = () => { if (g === gen) lastAlive = Date.now(); };
+    r.onstart = () => { if (g !== gen) return; alive(); everStarted = true; deniedTries = 0; liveStatus(); };
+    r.onaudiostart = r.onsoundstart = r.onspeechstart = alive;
+    r.onresult = e => {
+      if (g !== gen) return;
+      alive(); lastHeard = Date.now();
+      let finals = '', live = '';
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const t = e.results[i][0].transcript;
-        if (e.results[i].isFinal) finals += t; else interim += t;
+        if (e.results[i].isFinal) finals += t; else live += t;
       }
-      if (finals.trim()) {
-        // 확정 결과가 오면 바로 한 줄로 정리
-        interimText = '';
-        commit(finals);
-        previewFor = ''; previewText = '';
-      }
-      interimText = interim;
-      setInterim(interimText, previewText);
+      if (finals.trim()) { commit(finals); previewFor = ''; previewText = ''; }
+      interim = live;
+      setInterim(interim, previewText);
+      liveStatus();
       clearTimeout(silenceT);
-      if (interimText.trim()) {
+      if (interim.trim()) {
         schedulePreview();
-        // 말이 멈추면 인식기를 끊어 문장을 확정 (iOS는 isFinal이 늦게 옴)
-        silenceT = setTimeout(() => { if (listening && rec) { finalizeInterim(); try { rec.abort(); } catch {} } }, cfg.pause);
+        // iPhone Safari rarely marks results final mid-stream: a pause closes the sentence instead.
+        silenceT = setTimeout(() => { if (listening && g === gen) { finalizeInterim(); restart(150); } }, cfg.pause);
       }
     };
-    r.onerror = (e) => {
+    r.onerror = e => {
+      if (g !== gen) return;
       if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
-        stop();
-        status('마이크/음성 인식 권한이 없습니다. 브라우저 설정에서 허용하고, 아이폰은 받아쓰기를 켜 주세요.');
-      } else if (e.error === 'language-not-supported') {
-        stop(); status('이 기기에서 해당 언어 인식을 지원하지 않습니다.');
-      } else if (e.error !== 'no-speech' && e.error !== 'aborted') {
-        console.warn('speech error', e.error);
-      }
+        // Mid-meeting Safari sometimes reports this on an automatic restart; retry a few times first.
+        if (everStarted && deniedTries < 3) { deniedTries++; restart(1000); return; }
+        stop(); status('마이크·음성 인식이 막혔습니다. 듣기를 다시 눌러 주세요. 계속되면 브라우저 권한과 아이폰 설정 › Siri › 받아쓰기를 확인하세요.');
+      } else if (e.error === 'language-not-supported') { stop(); status('이 기기에서 해당 언어 인식을 지원하지 않습니다.'); }
+      else if (e.error === 'no-speech' || e.error === 'aborted') { /* onend restarts */ }
+      else { console.warn("speech", e.error); restarts++; restart(800); }
     };
-    r.onend = () => {
-      if (interimText.trim()) finalizeInterim();
-      if (listening) { clearTimeout(restartT); restartT = setTimeout(startRec, 150); }
-    };
+    r.onend = () => { if (g !== gen) return; if (interim.trim()) finalizeInterim(); if (listening) restart(150); };
     return r;
   }
-
-  function startRec() {
+  function restart(delay = 150) {
     if (!listening) return;
-    try { rec = makeRec(); rec.start(); }
-    catch (e) { console.warn(e); restartT = setTimeout(startRec, 500); }
+    const old = rec; rec = null; gen++;
+    if (old) { old.onstart = old.onresult = old.onerror = old.onend = old.onaudiostart = old.onsoundstart = old.onspeechstart = null; try { old.abort(); } catch {} }
+    clearTimeout(restartT); restartT = setTimeout(startRec, delay);
   }
-
+  function startRec() {
+    if (!listening || rec) return;
+    const g = ++gen;
+    startedAt = Date.now(); lastAlive = 0;
+    try { rec = makeRec(g); rec.start(); }
+    catch (e) { console.warn(e); rec = null; restartT = setTimeout(startRec, 600); }
+  }
+  function watchdog() {
+    if (!listening || document.visibilityState !== 'visible') return;
+    const now = Date.now();
+    if (!rec) { if (now - startedAt > 3000) startRec(); return; }
+    const neverStarted = !lastAlive && now - startedAt > 5000;   // start() swallowed silently
+    const quiet = lastAlive && now - lastAlive > 10000;           // no audio events at all for 10s
+    if (neverStarted || quiet) { if (interim.trim()) finalizeInterim(); restarts++; restart(100); }
+  }
   async function requestWake() {
     if (!cfg.wake || !('wakeLock' in navigator)) return;
     try { wakeLock = await navigator.wakeLock.request('screen'); } catch {}
@@ -424,27 +442,24 @@
       status('이 브라우저는 음성 인식을 지원하지 않습니다. 아이폰/아이패드는 Safari, PC는 Chrome·Edge를 사용하세요.');
       return;
     }
-    listening = true;
+    listening = true; everStarted = false; deniedTries = 0; restarts = 0; lastHeard = 0;
     $('#mic').classList.add('on'); $('#mic').setAttribute('aria-label', '듣기 멈춤');
     status('마이크 준비 중…');
-    requestWake();
-    startRec();
+    requestWake(); startRec();
+    clearInterval(watchT); watchT = setInterval(watchdog, 3000);
   }
   function stop() {
     listening = false;
-    clearTimeout(silenceT); clearTimeout(restartT); clearTimeout(previewT); previewT = null;
-    try { rec && rec.stop(); } catch {}
-    rec = null;
+    clearInterval(watchT); clearTimeout(silenceT); clearTimeout(restartT); clearTimeout(previewT); previewT = null;
+    const old = rec; rec = null; gen++;
+    if (old) { old.onstart = old.onresult = old.onerror = old.onend = null; try { old.stop(); } catch {} }
     finalizeInterim();
     $('#mic').classList.remove('on'); $('#mic').setAttribute('aria-label', '듣기 시작');
     status('대기 중');
     try { wakeLock && wakeLock.release(); } catch {}
     wakeLock = null;
   }
-  function restartIfListening() {
-    if (!listening) return;
-    try { rec && rec.abort(); } catch {}  // onend에서 새 언어로 재시작
-  }
+  function restartIfListening() { if (listening) restart(150); }
 
   // ---------- 이벤트 ----------
   $('#mic').onclick = () => (listening ? stop() : start());
