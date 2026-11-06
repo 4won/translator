@@ -1,0 +1,514 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#111418">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="실시간 번역">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<title>실시간 번역</title>
+<style>
+  :root {
+    --bg: #f6f6f3; --panel: #ffffff; --ink: #16181b; --muted: #6b7078; --line: #e3e3de;
+    --accent: #1f6feb; --accent-ink: #fff; --live: #d93025; --tr: #0b3d91; --soft: #eef2f8;
+    --fs: 22px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #111418; --panel: #1a1e24; --ink: #eef0f3; --muted: #9098a3; --line: #2a3038;
+      --accent: #4c8dff; --accent-ink: #fff; --live: #ff5f52; --tr: #9fc2ff; --soft: #1f2631;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #111418; --panel: #1a1e24; --ink: #eef0f3; --muted: #9098a3; --line: #2a3038;
+    --accent: #4c8dff; --accent-ink: #fff; --live: #ff5f52; --tr: #9fc2ff; --soft: #1f2631;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Hiragino Sans", "Segoe UI", "Malgun Gothic", sans-serif; }
+  body { display: flex; flex-direction: column; height: 100dvh;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left); }
+
+  header { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--line);
+    background: var(--panel); flex-wrap: wrap; }
+  .grp { display: flex; align-items: center; gap: 6px; }
+  .lbl { font-size: 12px; color: var(--muted); }
+  select, button { font: inherit; color: inherit; }
+  select { background: var(--soft); border: 1px solid var(--line); border-radius: 10px; padding: 7px 10px; font-size: 15px; }
+  .chip { border: 1px solid var(--line); background: transparent; border-radius: 999px; padding: 6px 12px; font-size: 14px; cursor: pointer; }
+  .chip[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .chip:disabled { opacity: .3; }
+  .spacer { flex: 1; }
+  .icon-btn { border: 1px solid var(--line); background: transparent; border-radius: 10px; padding: 7px 10px; font-size: 14px; cursor: pointer; }
+
+  #log { flex: 1; overflow-y: auto; padding: 16px; -webkit-overflow-scrolling: touch; }
+  .empty { color: var(--muted); text-align: center; margin-top: 18vh; line-height: 1.7; font-size: 15px; padding: 0 16px; }
+  .item { max-width: 900px; margin: 0 auto 18px; }
+  .meta { font-size: 11px; color: var(--muted); margin-bottom: 3px; }
+  .src { font-size: calc(var(--fs) * .78); line-height: 1.45; color: var(--muted); }
+  .tr { font-size: var(--fs); line-height: 1.45; color: var(--tr); margin-top: 4px; font-weight: 500; }
+  .tr .tag { font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; margin-right: 6px; vertical-align: 2px; font-weight: 400; }
+  .tr.pending { opacity: .45; }
+  .tr.err { color: var(--live); font-size: 14px; }
+  body.big-orig .src { font-size: var(--fs); color: var(--ink); }
+  .interim .src { color: var(--ink); font-style: italic; opacity: .75; }
+  .interim .tr { opacity: .6; }
+
+  footer { border-top: 1px solid var(--line); background: var(--panel);
+    padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); display: flex; align-items: center; gap: 12px; }
+  #mic { width: 64px; height: 64px; border-radius: 50%; border: none; background: var(--accent); color: #fff; cursor: pointer;
+    display: grid; place-items: center; flex-shrink: 0; transition: transform .15s ease, background .2s; }
+  #mic:active { transform: scale(.94); }
+  #mic.on { background: var(--live); animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(217,48,37,.45); } 50% { box-shadow: 0 0 0 10px rgba(217,48,37,0); } }
+  @media (prefers-reduced-motion: reduce) { #mic.on { animation: none; } }
+  #status { font-size: 13px; color: var(--muted); flex: 1; min-width: 0; line-height: 1.4; }
+  #status b { color: var(--ink); font-weight: 600; }
+  .fs { display: flex; gap: 6px; }
+
+  dialog { border: 1px solid var(--line); border-radius: 16px; background: var(--panel); color: var(--ink);
+    width: min(520px, calc(100vw - 32px)); padding: 20px; }
+  dialog::backdrop { background: rgba(0,0,0,.45); }
+  dialog h2 { margin: 0 0 12px; font-size: 18px; }
+  dialog label { display: block; font-size: 13px; color: var(--muted); margin: 14px 0 6px; }
+  dialog input[type=text], dialog input[type=password], dialog select { width: 100%; background: var(--soft); border: 1px solid var(--line);
+    border-radius: 10px; padding: 9px 10px; font: inherit; color: inherit; font-size: 15px; }
+  dialog .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; flex-wrap: wrap; }
+  dialog .help { font-size: 12px; color: var(--muted); line-height: 1.6; margin-top: 6px; }
+  .check { display: flex; gap: 8px; align-items: center; font-size: 14px; color: var(--ink) !important; }
+  .primary { background: var(--accent); color: var(--accent-ink); border: none; border-radius: 10px; padding: 9px 16px; cursor: pointer; }
+  #toast { position: fixed; left: 50%; bottom: calc(100px + env(safe-area-inset-bottom)); transform: translateX(-50%);
+    background: var(--ink); color: var(--bg); padding: 8px 14px; border-radius: 10px; font-size: 14px; opacity: 0; pointer-events: none; transition: opacity .2s; }
+  #toast.show { opacity: .92; }
+  #jump { position: fixed; right: 16px; bottom: calc(96px + env(safe-area-inset-bottom)); display: none; }
+  #jump.show { display: block; background: var(--panel); }
+</style>
+</head>
+<body>
+<header>
+  <div class="grp">
+    <span class="lbl">말하는 언어</span>
+    <select id="srcLang" aria-label="말하는 언어">
+      <option value="en">English</option>
+      <option value="ja">日本語</option>
+      <option value="ko">한국어</option>
+    </select>
+  </div>
+  <div class="grp" id="targets" aria-label="번역 언어">
+    <span class="lbl">번역</span>
+    <button class="chip" data-lang="ko" aria-pressed="true">한국어</button>
+    <button class="chip" data-lang="ja" aria-pressed="false">日本語</button>
+    <button class="chip" data-lang="en" aria-pressed="false">English</button>
+  </div>
+  <div class="spacer"></div>
+  <button class="icon-btn" id="btnCopy">복사</button>
+  <button class="icon-btn" id="btnMenu">설정</button>
+</header>
+
+<main id="log">
+  <div class="empty" id="empty">
+    아래 마이크 버튼을 누르면 듣기 시작합니다.<br>
+    말이 잠깐 멈출 때마다 한 문장씩 정리되고 번역이 붙습니다.
+  </div>
+</main>
+<button class="icon-btn" id="jump">↓ 최신으로</button>
+
+<footer>
+  <button id="mic" aria-label="듣기 시작">
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><path d="M12 17v4"/></svg>
+  </button>
+  <div id="status">대기 중</div>
+  <div class="fs">
+    <button class="icon-btn" id="fsDown" aria-label="글자 작게">가−</button>
+    <button class="icon-btn" id="fsUp" aria-label="글자 크게">가+</button>
+  </div>
+</footer>
+
+<dialog id="settings">
+  <h2>설정</h2>
+
+  <label for="engine">번역 엔진</label>
+  <select id="engine">
+    <option value="google">무료 (키 없음, Google 웹 번역)</option>
+    <option value="azure">Microsoft Azure Translator (무료 키, 월 200만 자)</option>
+  </select>
+  <div id="azureBox" hidden>
+    <label for="azKey">Azure 키</label>
+    <input type="password" id="azKey" autocomplete="off" placeholder="Ocp-Apim-Subscription-Key">
+    <label for="azRegion">Azure 지역 (예: koreacentral, global)</label>
+    <input type="text" id="azRegion" autocomplete="off" placeholder="koreacentral">
+    <div class="help">키는 이 기기 브라우저에만 저장됩니다.</div>
+  </div>
+  <div class="help">무료 엔진이 막히면 자동으로 MyMemory(하루 약 5천 자)로 넘어갑니다.</div>
+
+  <label for="pause">문장 끊는 기준 (말 멈춤)</label>
+  <select id="pause">
+    <option value="900">짧게 0.9초 — 빨리 번역</option>
+    <option value="1300" selected>보통 1.3초</option>
+    <option value="2000">길게 2초 — 문장이 덜 잘림</option>
+  </select>
+
+  <label class="check"><input type="checkbox" id="preview" checked> 말하는 중에도 번역 미리보기 (2초마다)</label>
+  <label class="check"><input type="checkbox" id="bigOrig"> 원문도 크게 보기</label>
+  <label class="check"><input type="checkbox" id="wake" checked> 듣는 동안 화면 꺼짐 방지</label>
+
+  <label for="theme">화면</label>
+  <select id="theme">
+    <option value="">기기 설정 따름</option>
+    <option value="light">밝게</option>
+    <option value="dark">어둡게</option>
+  </select>
+
+  <div class="row">
+    <button class="icon-btn" id="btnShare">텍스트로 내보내기</button>
+    <button class="icon-btn" id="btnClear">기록 지우기</button>
+    <button class="primary" id="btnClose">닫기</button>
+  </div>
+  <div class="help" style="margin-top:14px">
+    아이폰/아이패드: 설정 › Siri(또는 Apple Intelligence 및 Siri) › 받아쓰기가 켜져 있어야 음성 인식이 됩니다.
+  </div>
+</dialog>
+
+<div id="toast"></div>
+
+<script>
+(() => {
+  const $ = (s) => document.querySelector(s);
+  const LOCALE = { en: 'en-US', ja: 'ja-JP', ko: 'ko-KR' };
+  const NAME = { en: 'EN', ja: 'JA', ko: 'KO' };
+
+  // ---------- 저장 ----------
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem('lt:' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+    set(k, v) { try { localStorage.setItem('lt:' + k, JSON.stringify(v)); } catch {} },
+  };
+  const cfg = Object.assign({
+    src: 'en', targets: ['ko'], engine: 'google', azKey: '', azRegion: '', pause: 1300,
+    preview: true, bigOrig: false, wake: true, theme: '', fs: 22,
+  }, store.get('cfg', {}));
+  const saveCfg = () => store.set('cfg', cfg);
+  let items = store.get('items', []); // {id, t, src, lang, tr:{ko:'..'}}
+  const saveItems = () => store.set('items', items.slice(-1500));
+
+  // ---------- 화면 반영 ----------
+  function applyCfg() {
+    $('#srcLang').value = cfg.src;
+    document.querySelectorAll('#targets .chip').forEach((b) => {
+      const l = b.dataset.lang;
+      b.disabled = l === cfg.src;
+      b.setAttribute('aria-pressed', String(cfg.targets.includes(l) && l !== cfg.src));
+    });
+    document.documentElement.style.setProperty('--fs', cfg.fs + 'px');
+    document.body.classList.toggle('big-orig', cfg.bigOrig);
+    if (cfg.theme) document.documentElement.dataset.theme = cfg.theme; else delete document.documentElement.dataset.theme;
+  }
+  const activeTargets = () => cfg.targets.filter((l) => l !== cfg.src);
+
+  const log = $('#log');
+  let stick = true;
+  log.addEventListener('scroll', () => {
+    stick = log.scrollHeight - log.scrollTop - log.clientHeight < 80;
+    $('#jump').classList.toggle('show', !stick);
+  });
+  $('#jump').onclick = () => { log.scrollTop = log.scrollHeight; };
+  const scrollEnd = () => { if (stick) log.scrollTop = log.scrollHeight; };
+
+  const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const hhmm = (t) => new Date(t).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+  function renderItem(it) {
+    let el = document.getElementById('it-' + it.id);
+    if (!el) { el = document.createElement('div'); el.className = 'item'; el.id = 'it-' + it.id; log.insertBefore(el, interimEl); }
+    const trs = Object.keys(it.tr).map((l) => {
+      const v = it.tr[l];
+      if (v === null) return `<div class="tr pending"><span class="tag">${NAME[l]}</span>번역 중…</div>`;
+      if (v && v.err) return `<div class="tr err"><span class="tag">${NAME[l]}</span>번역 실패 — 탭하면 다시 시도</div>`;
+      return `<div class="tr"><span class="tag">${NAME[l]}</span>${esc(v)}</div>`;
+    }).join('');
+    el.innerHTML = `<div class="meta">${hhmm(it.t)} · ${NAME[it.lang]}</div><div class="src">${esc(it.src)}</div>${trs}`;
+    el.onclick = () => { if (Object.values(it.tr).some((v) => v && v.err)) translateItem(it); };
+  }
+
+  const interimEl = document.createElement('div');
+  interimEl.className = 'item interim';
+  interimEl.hidden = true;
+  log.appendChild(interimEl);
+
+  function renderAll() {
+    log.querySelectorAll('.item:not(.interim)').forEach((n) => n.remove());
+    items.forEach(renderItem);
+    $('#empty').hidden = items.length > 0;
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function setInterim(text, trText) {
+    if (!text) { interimEl.hidden = true; interimEl.innerHTML = ''; return; }
+    $('#empty').hidden = true;
+    interimEl.hidden = false;
+    interimEl.innerHTML = `<div class="meta">듣는 중…</div><div class="src">${esc(text)}</div>` +
+      (trText ? `<div class="tr">${esc(trText)}</div>` : '');
+    scrollEnd();
+  }
+
+  let toastT;
+  function toast(msg) {
+    const t = $('#toast'); t.textContent = msg; t.classList.add('show');
+    clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 2200);
+  }
+
+  // ---------- 번역 ----------
+  const cache = new Map();
+  async function gtx(text, sl, tl) {
+    const u = `https://translate.googleapis.com/translate_a/single?client=gtx&dt=t&sl=${sl}&tl=${tl}&q=${encodeURIComponent(text)}`;
+    const r = await fetch(u);
+    if (!r.ok) throw new Error('google ' + r.status);
+    const j = await r.json();
+    return j[0].map((x) => x[0]).join('');
+  }
+  async function mymemory(text, sl, tl) {
+    const u = `https://api.mymemory.translated.net/get?langpair=${sl}|${tl}&q=${encodeURIComponent(text.slice(0, 480))}`;
+    const r = await fetch(u);
+    if (!r.ok) throw new Error('mymemory ' + r.status);
+    const j = await r.json();
+    if (j.responseStatus !== 200 && j.responseStatus !== '200') throw new Error('mymemory ' + j.responseStatus);
+    return j.responseData.translatedText;
+  }
+  async function azure(text, sl, tls) {
+    const u = `https://api.cognitive.microsofttranslator.com/translate?api-version=3.0&from=${sl}` + tls.map((l) => '&to=' + l).join('');
+    const h = { 'Content-Type': 'application/json', 'Ocp-Apim-Subscription-Key': cfg.azKey };
+    if (cfg.azRegion) h['Ocp-Apim-Subscription-Region'] = cfg.azRegion;
+    const r = await fetch(u, { method: 'POST', headers: h, body: JSON.stringify([{ Text: text }]) });
+    if (!r.ok) throw new Error('azure ' + r.status);
+    const j = await r.json();
+    const out = {};
+    j[0].translations.forEach((t) => { out[t.to.split('-')[0]] = t.text; });
+    return out;
+  }
+  // 여러 목표 언어를 한 번에 번역 → {ko:'..', ja:'..'}
+  async function translate(text, sl, tls) {
+    const key = sl + '|' + tls.join(',') + '|' + text;
+    if (cache.has(key)) return cache.get(key);
+    let out = {};
+    if (cfg.engine === 'azure' && cfg.azKey) {
+      try { out = await azure(text, sl, tls); } catch (e) { console.warn(e); }
+    }
+    await Promise.all(tls.filter((l) => out[l] == null).map(async (l) => {
+      try { out[l] = await gtx(text, sl, l); }
+      catch (e) { console.warn(e); out[l] = await mymemory(text, sl, l); }
+    }));
+    cache.set(key, out);
+    if (cache.size > 300) cache.delete(cache.keys().next().value);
+    return out;
+  }
+
+  async function translateItem(it) {
+    const tls = Object.keys(it.tr);
+    tls.forEach((l) => { it.tr[l] = null; });
+    renderItem(it);
+    try {
+      const out = await translate(it.src, it.lang, tls);
+      tls.forEach((l) => { it.tr[l] = out[l] ?? { err: 1 }; });
+    } catch (e) {
+      console.warn(e);
+      tls.forEach((l) => { if (it.tr[l] == null) it.tr[l] = { err: 1 }; });
+    }
+    renderItem(it); saveItems(); scrollEnd();
+  }
+
+  function commit(text) {
+    text = text.trim();
+    if (!text) return;
+    const it = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5), t: Date.now(), src: text, lang: cfg.src, tr: {} };
+    activeTargets().forEach((l) => { it.tr[l] = null; });
+    items.push(it);
+    $('#empty').hidden = true;
+    renderItem(it); saveItems(); scrollEnd();
+    if (Object.keys(it.tr).length) translateItem(it);
+  }
+
+  // ---------- 음성 인식 ----------
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let rec = null, listening = false, interimText = '', silenceT = null, restartT = null;
+  let previewT = null, previewFor = '', previewText = '';
+  let wakeLock = null;
+
+  function status(html) { $('#status').innerHTML = html; }
+
+  function finalizeInterim() {
+    if (interimText.trim()) commit(interimText);
+    interimText = ''; previewFor = ''; previewText = '';
+    setInterim('');
+  }
+
+  function schedulePreview() {
+    if (!cfg.preview || previewT || !activeTargets().length) return;
+    previewT = setTimeout(async () => {
+      previewT = null;
+      const text = interimText.trim();
+      if (!text || text === previewFor || text.length < 12) return;
+      previewFor = text;
+      const tl = activeTargets()[0];
+      try {
+        const out = await translate(text, cfg.src, [tl]);
+        if (interimText.trim().startsWith(text.slice(0, 10))) { previewText = out[tl]; setInterim(interimText, previewText); }
+      } catch {}
+    }, 2000);
+  }
+
+  function makeRec() {
+    const r = new SR();
+    r.lang = LOCALE[cfg.src];
+    r.continuous = true;
+    r.interimResults = true;
+    r.maxAlternatives = 1;
+    r.onstart = () => status(`<b>듣는 중</b> · ${NAME[cfg.src]} → ${activeTargets().map((l) => NAME[l]).join(', ') || '번역 없음'}`);
+    r.onresult = (e) => {
+      let finals = '', interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) finals += t; else interim += t;
+      }
+      if (finals.trim()) {
+        // 확정 결과가 오면 바로 한 줄로 정리
+        interimText = '';
+        commit(finals);
+        previewFor = ''; previewText = '';
+      }
+      interimText = interim;
+      setInterim(interimText, previewText);
+      clearTimeout(silenceT);
+      if (interimText.trim()) {
+        schedulePreview();
+        // 말이 멈추면 인식기를 끊어 문장을 확정 (iOS는 isFinal이 늦게 옴)
+        silenceT = setTimeout(() => { if (listening && rec) { finalizeInterim(); try { rec.abort(); } catch {} } }, cfg.pause);
+      }
+    };
+    r.onerror = (e) => {
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+        stop();
+        status('마이크/음성 인식 권한이 없습니다. 브라우저 설정에서 허용하고, 아이폰은 받아쓰기를 켜 주세요.');
+      } else if (e.error === 'language-not-supported') {
+        stop(); status('이 기기에서 해당 언어 인식을 지원하지 않습니다.');
+      } else if (e.error !== 'no-speech' && e.error !== 'aborted') {
+        console.warn('speech error', e.error);
+      }
+    };
+    r.onend = () => {
+      if (interimText.trim()) finalizeInterim();
+      if (listening) { clearTimeout(restartT); restartT = setTimeout(startRec, 150); }
+    };
+    return r;
+  }
+
+  function startRec() {
+    if (!listening) return;
+    try { rec = makeRec(); rec.start(); }
+    catch (e) { console.warn(e); restartT = setTimeout(startRec, 500); }
+  }
+
+  async function requestWake() {
+    if (!cfg.wake || !('wakeLock' in navigator)) return;
+    try { wakeLock = await navigator.wakeLock.request('screen'); } catch {}
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && listening) { requestWake(); if (!rec) startRec(); }
+  });
+
+  function start() {
+    if (!SR) {
+      status('이 브라우저는 음성 인식을 지원하지 않습니다. 아이폰/아이패드는 Safari, PC는 Chrome·Edge를 사용하세요.');
+      return;
+    }
+    listening = true;
+    $('#mic').classList.add('on'); $('#mic').setAttribute('aria-label', '듣기 멈춤');
+    status('마이크 준비 중…');
+    requestWake();
+    startRec();
+  }
+  function stop() {
+    listening = false;
+    clearTimeout(silenceT); clearTimeout(restartT); clearTimeout(previewT); previewT = null;
+    try { rec && rec.stop(); } catch {}
+    rec = null;
+    finalizeInterim();
+    $('#mic').classList.remove('on'); $('#mic').setAttribute('aria-label', '듣기 시작');
+    status('대기 중');
+    try { wakeLock && wakeLock.release(); } catch {}
+    wakeLock = null;
+  }
+  function restartIfListening() {
+    if (!listening) return;
+    try { rec && rec.abort(); } catch {}  // onend에서 새 언어로 재시작
+  }
+
+  // ---------- 이벤트 ----------
+  $('#mic').onclick = () => (listening ? stop() : start());
+  $('#srcLang').onchange = (e) => { cfg.src = e.target.value; if (!activeTargets().length) cfg.targets = [cfg.src === 'ko' ? 'en' : 'ko']; saveCfg(); applyCfg(); restartIfListening(); };
+  document.querySelectorAll('#targets .chip').forEach((b) => {
+    b.onclick = () => {
+      const l = b.dataset.lang;
+      cfg.targets = cfg.targets.includes(l) ? cfg.targets.filter((x) => x !== l) : [...cfg.targets, l];
+      saveCfg(); applyCfg();
+      if (listening) status(`<b>듣는 중</b> · ${NAME[cfg.src]} → ${activeTargets().map((x) => NAME[x]).join(', ') || '번역 없음'}`);
+    };
+  });
+  $('#fsUp').onclick = () => { cfg.fs = Math.min(48, cfg.fs + 2); saveCfg(); applyCfg(); };
+  $('#fsDown').onclick = () => { cfg.fs = Math.max(14, cfg.fs - 2); saveCfg(); applyCfg(); };
+
+  function asText() {
+    return items.map((it) => {
+      const tr = Object.entries(it.tr).map(([l, v]) => `  [${NAME[l]}] ${typeof v === 'string' ? v : ''}`).join('\n');
+      return `${hhmm(it.t)} [${NAME[it.lang]}] ${it.src}\n${tr}`;
+    }).join('\n\n');
+  }
+  $('#btnCopy').onclick = async () => {
+    if (!items.length) return toast('복사할 내용이 없습니다');
+    try { await navigator.clipboard.writeText(asText()); toast('전체 기록을 복사했습니다'); }
+    catch { toast('복사하지 못했습니다'); }
+  };
+  $('#btnShare').onclick = async () => {
+    if (!items.length) return toast('내보낼 내용이 없습니다');
+    const name = `회의번역_${new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '')}.txt`;
+    const file = new File([asText()], name, { type: 'text/plain' });
+    try {
+      if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: name }); return; }
+    } catch (e) { if (e.name === 'AbortError') return; }
+    const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = name; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  };
+  $('#btnClear').onclick = () => {
+    if (!confirm('지금까지의 기록을 모두 지울까요?')) return;
+    items = []; saveItems(); renderAll(); $('#empty').hidden = false; $('#settings').close();
+  };
+
+  const dlg = $('#settings');
+  $('#btnMenu').onclick = () => {
+    $('#engine').value = cfg.engine; $('#azKey').value = cfg.azKey; $('#azRegion').value = cfg.azRegion;
+    $('#pause').value = String(cfg.pause); $('#preview').checked = cfg.preview; $('#bigOrig').checked = cfg.bigOrig;
+    $('#wake').checked = cfg.wake; $('#theme').value = cfg.theme;
+    $('#azureBox').hidden = cfg.engine !== 'azure';
+    dlg.showModal();
+  };
+  $('#engine').onchange = (e) => { $('#azureBox').hidden = e.target.value !== 'azure'; };
+  dlg.addEventListener('close', () => {
+    cfg.engine = $('#engine').value; cfg.azKey = $('#azKey').value.trim(); cfg.azRegion = $('#azRegion').value.trim();
+    cfg.pause = +$('#pause').value; cfg.preview = $('#preview').checked; cfg.bigOrig = $('#bigOrig').checked;
+    cfg.wake = $('#wake').checked; cfg.theme = $('#theme').value;
+    saveCfg(); applyCfg();
+  });
+  $('#btnClose').onclick = () => dlg.close();
+
+  applyCfg();
+  renderAll();
+  if (!SR) status('이 브라우저는 음성 인식을 지원하지 않습니다. Safari(아이폰·아이패드) 또는 Chrome·Edge(PC)를 사용하세요.');
+
+  if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
+})();
+</script>
+</body>
+</html>
